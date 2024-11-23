@@ -1,37 +1,57 @@
+# ant.py - Ant Sınıfı ve Yeni Karınca Sınıfları
+
 import pygame
 import random
 import numpy as np
 from settings import *
 from quadtree import *
-
+from pheromone import PheromoneManager
 
 class Ant(pygame.sprite.Sprite):
-    def __init__(self, delta_time=1):
+    def __init__(self, delta_time=1, health=100):
         super().__init__()
         self.delta_time = delta_time
         self.speed = 0.3 * delta_time
         self.index = 0
-        self.size = (IMAGE_W/3, IMAGE_H/3)
+        self.size = (IMAGE_W / 3, IMAGE_H / 3)
         self.move = [pygame.transform.scale(pygame.image.load(
             f'../images/ant{i}.png').convert_alpha(), self.size) for i in range(1, 9)]
         self.x = NEST_X
         self.y = NEST_Y
         self.image = self.move[self.index]
         self.rect = self.image.get_rect()
-        self.angle = random.uniform(0, 2*np.pi)
+        self.angle = random.uniform(0, 2 * np.pi)
         self.choose = 0
         self.encountered_pheromones = set()
         self.encountered_foods = set()
         self.dragged_food = None
+        self.health = health  # Karınca sağlığı
+        self.lifespan = ANT_LIFESPAN  # Karıncanın yaşam süresi
+        self.alive = True  # Karıncanın canlılık durumu
 
-    def update(self, screen, nest, foods, ant_quad_tree, pheromone_qtree):
+    def kill(self):
+        self.alive = False
+        self.health = 0
+
+    def take_damage(self, damage):
+        self.health -= damage
+        if self.health <= 0:
+            self.kill()
+
+    def update(self, screen, nest, foods, ant_quad_tree, pheromone_qtree, queen):
+        # Yaşam süresi ve sağlık kontrolü
+        self.lifespan -= 0.1
+        if self.lifespan <= 0 or self.health <= 0:
+            self.kill()
+            return
+
         self.speedx = self.speed * np.cos(self.angle)
         self.speedy = -self.speed * np.sin(self.angle)
 
         self.x += self.speedx
         self.y += self.speedy
 
-        self.image = self.move[self.index//2]
+        self.image = self.move[self.index // 2]
         if self.index < 15:
             self.index += 1
         else:
@@ -48,6 +68,18 @@ class Ant(pygame.sprite.Sprite):
         elif self.choose == 1:
             self.return_to_nest(screen, nest, pheromone_qtree)
 
+        # Queen üretim süreci
+        new_ant = queen.produce()
+        if new_ant:
+            if isinstance(new_ant, Worker):
+                ant_quad_tree.insert(Point(new_ant.x, new_ant.y, new_ant))
+            elif isinstance(new_ant, Soldier):
+                ant_quad_tree.insert(Point(new_ant.x, new_ant.y, new_ant))
+
+    def leave_pheromone(self, pheromone_manager, pheromone_type, lifespan, pheromone_qtree):
+        pheromone_manager.leave_pheromone(self, pheromone_type, lifespan, pheromone_qtree)
+
+    # Diğer metodlar ...
     def wrap_around(self):
         if self.x < 15:
             angel_d = self.angle_direction(-0.25, 0.25)
@@ -80,6 +112,7 @@ class Ant(pygame.sprite.Sprite):
         # pygame.draw.circle(screen, color, (visible_range.x,
         #                                    visible_range.y), visible_range.w, 1)
         return visible_range
+    
 
     def search_for_food(self, screen, foods, pheromone_qtree):
         dist_list = []
@@ -199,3 +232,66 @@ class Ant(pygame.sprite.Sprite):
                         self.intersects(other_ant):
                     self.update_angle()
                     other_ant.update_angle()
+
+class Worker(Ant):
+    def __init__(self, delta_time=1, health=100):
+        super().__init__(delta_time, health)
+        self.pheromone_manager = PheromoneManager()  # Feromon yöneticisi ekleniyor
+
+    def search_for_food(self, screen, foods, pheromone_qtree):
+        # İşçi karınca yiyecek arar ve yiyecek feromonu bırakır
+        super().search_for_food(screen, foods, pheromone_qtree)
+        self.leave_pheromone(self.pheromone_manager, 'food', PHEROMONE_LIFESPAN, pheromone_qtree)
+
+    def detect_threat(self, pheromone_qtree):
+        # Tehdit algılama - Tehdit feromonlarını kontrol eder
+        search_area = Rectangle(self.x - RADIUS, self.y - RADIUS, RADIUS * 2, RADIUS * 2)
+        threats = pheromone_qtree.query(search_area, pheromone_type='threat')
+        return len(threats) > 0
+
+    def return_to_nest(self, screen, nest, pheromone_qtree):
+        # Yuvaya geri dönme ve tehdit feromonu bırakma
+        self.leave_pheromone(self.pheromone_manager, 'threat', PHEROMONE_LIFESPAN, pheromone_qtree)
+        self.choose = 1
+        super().return_to_nest(screen, nest, pheromone_qtree)
+
+class Soldier(Ant):
+    def __init__(self, delta_time=1, health=100):
+        super().__init__(delta_time, health)
+        self.pheromone_manager = PheromoneManager()  # Feromon yöneticisi ekleniyor
+
+    def follow_threat_pheromone(self, pheromone_qtree):
+        # Asker karınca tehdit feromonunu takip eder
+        search_area = Rectangle(self.x - RADIUS, self.y - RADIUS, RADIUS * 2, RADIUS * 2)
+        threats = pheromone_qtree.query(search_area, pheromone_type='threat')
+        if len(threats) > 0:
+            closest_threat = min(threats, key=lambda t: np.hypot(t.x - self.x, t.y - self.y))
+            self.angle = np.arctan2(self.y - closest_threat.y, closest_threat.x - self.x)
+            self.choose = 0
+
+    def leave_pheromone(self, pheromone_manager, pheromone_type, lifespan, pheromone_qtree):
+        pheromone_manager.leave_pheromone(self, pheromone_type, lifespan, pheromone_qtree)
+
+class Queen():
+    def __init__(self):
+        self.stress = 0  # Stres seviyesi negatifse asker, pozitifse işçi üretilir; 0 iken beklenir
+        self.countWorkers = 0
+        self.countSoldiers = 0
+        self.totalAntCount = self.countWorkers + self.countSoldiers
+
+    def produce(self):
+        if self.stress < 0:
+            # Asker üret
+            new_soldier = Soldier()
+            self.countSoldiers += 1
+            self.totalAntCount = self.countWorkers + self.countSoldiers
+            return new_soldier
+        elif self.stress > 0:
+            # İşçi üret
+            new_worker = Worker()
+            self.countWorkers += 1
+            self.totalAntCount = self.countWorkers + self.countSoldiers
+            return new_worker
+        else:
+            # Bekle
+            return None
