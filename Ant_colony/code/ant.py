@@ -115,17 +115,16 @@ class Ant(pygame.sprite.Sprite):
     
 
     def search_for_food(self, screen, foods, pheromone_qtree):
+        # İşçi karınca yiyecek arar ve yiyecek feromonu bırakır
         dist_list = []
         for j in range(3):
-            visible_range = self.draw_view(ANGLES[j])  # screen, COLORS[j],
+            visible_range = self.draw_view(ANGLES[j])
             found = pheromone_qtree.query(visible_range)
             if found:
-                untaken_foods = list(set(
-                    food for food in foods if not food.taken))
+                untaken_foods = list(set(food for food in foods if not food.taken))
                 if untaken_foods:
                     random_food = random.choice(untaken_foods)
                     for f in found:
-                        # pygame.draw.circle(screen, BLUE, (f.x, f.y), 3)
                         points = (f.x, f.y)
                         goal = [(random_food.x, random_food.y)]
                         dist_to = self.get_closest_point(points, goal)
@@ -137,6 +136,49 @@ class Ant(pygame.sprite.Sprite):
             self.angle += angel_d * 0.1
             dist_list.clear()
         self.take_food(foods)
+
+    def take_food(self, foods):
+        f_collisions = pygame.sprite.spritecollide(self, foods, False)
+        if f_collisions:
+            for food in f_collisions:
+                if food not in self.encountered_foods and not food.taken:
+                    self.dragged_food = food
+                    self.encountered_foods.add(self.dragged_food)
+                    self.angle += np.pi
+                    food.taken = True
+                    self.carrying_food = True
+                    self.choose = 1
+                    break
+                    self.choose = 1
+                    break
+
+    def return_to_nest(self, screen, nest, pheromone_qtree):
+        dist_list = []
+        for j in range(3):
+            visible_range = self.draw_view(ANGLES[j])
+            found = pheromone_qtree.query(visible_range)
+            if found:
+                for f in found:
+                    points = (f.x, f.y)
+                    goal = (NEST_X, NEST_Y)
+                    dist_to = self.get_closest_point(points, goal)
+                    dist_list.append((f.x, f.y, dist_to))
+                    found.clear()
+        if dist_list:
+            angle_f = self.min_dist(dist_list)
+            angel_d = self.angle_different(angle_f)
+            self.angle += angel_d * 0.1
+            dist_list.clear()
+        self.drop_food_in_nest(nest)
+
+    def drop_food_in_nest(self, nest):
+        if self.rect.colliderect(nest):
+            if self.dragged_food is not None:
+                self.dragged_food.kill()
+                self.dragged_food = None
+                self.carrying_food = False
+                self.angle += np.pi
+                self.choose = 0
 
     def take_food(self, foods):
         f_collisions = pygame.sprite.spritecollide(self, foods, False)
@@ -186,6 +228,10 @@ class Ant(pygame.sprite.Sprite):
 
     def draw(self, screen):
         screen.blit(self.image, self.rect)
+        # Yemek taşıyan karınca çizimi
+        if self.carrying_food and self.dragged_food is not None:
+            self.dragged_food.rect.center = (self.x, self.y)
+            screen.blit(self.dragged_food.image, self.dragged_food.rect)
         # pygame.draw.rect(screen, (255, 0, 0), self.rect, 1)
         self.rect.center = (self.x, self.y)
 
@@ -237,6 +283,8 @@ class Worker(Ant):
     def __init__(self, delta_time=1, health=100):
         super().__init__(delta_time, health)
         self.pheromone_manager = PheromoneManager()  # Feromon yöneticisi ekleniyor
+        self.dragged_food = None
+        self.carrying_food = False  # Yemek taşıma durumu ekleniyor
 
     def search_for_food(self, screen, foods, pheromone_qtree):
         # İşçi karınca yiyecek arar ve yiyecek feromonu bırakır
