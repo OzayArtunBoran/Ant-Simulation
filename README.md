@@ -1,3 +1,15 @@
-This code exploring the Ant Colony Simulation using Python and Pygame
+Basic Ant Simulation Project
 
-Here's the video explaining how I did it:	https://youtu.be/KalklCVTC0g
+python -m venv venv
+
+venv\Scripts\activate
+
+cd code
+
+pip install -r requirements.txt
+
+For running project:
+python main.py
+
+For seeing last run's statistics:
+python graph.py
